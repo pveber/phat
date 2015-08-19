@@ -17,6 +17,11 @@ type rel
 type dir
 type file
 
+type (_,_,_) cons =
+  | RR : (rel,rel,rel) cons
+  | UA : ('a,abs,abs) cons
+  | AR : (abs,rel,abs) cons
+
 type ('absrel,'kind) item =
 | Root : (abs,dir) item
 | File : name -> (rel,file) item
@@ -27,7 +32,7 @@ type ('absrel,'kind) item =
 
 and ('absrel,'kind) path =
 | Item : ('absrel,'kind) item -> ('absrel,'kind) path
-| Cons : ('absrel,dir) item * (rel,'kind) path -> ('absrel,'kind) path
+| Cons : ('a,'b,'c) cons * ('a,dir) item * ('b,'kind) path -> ('c,'kind) path
 
 type file_path = (abs,file) path
 type dir_path = (abs,dir) path
@@ -48,12 +53,14 @@ let name s =
 (******************************************************************************)
 (* Operators                                                                  *)
 (******************************************************************************)
-let rec concat : type absrel kind .
-  (absrel,dir) path -> (rel,kind) path -> (absrel,kind) path
-  = fun x y ->
-    match x with
-    | Item x -> Cons (x,y)
-    | Cons (x1,x2) -> Cons (x1, concat x2 y)
+let rec concat : type a b c kind .
+  (a,b,c) cons -> (a,dir) path -> (b,kind) path -> (c,kind) path
+  = fun c x y ->
+    let rec aux : type a . (a,kind) path -> (a,kind) path = function
+      | Item i -> Cons (c,i,y)
+      | Cons (c',x1,x2) -> Cons (c, x1, aux x2)
+    in
+    aux x
 
 (* TODO: check for infinite loops *)
 let rec resolve_links : type a b . (a,b) path -> (a,b) path =
