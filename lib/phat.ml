@@ -23,20 +23,29 @@ type (_,_,_) cons =
   | AR : (abs,rel,abs) cons
   | AA : (abs,abs,abs) cons
 
-type ('absrel,'kind) item =
-| Root : (abs,dir) item
-| File : name -> (rel,file) item
-| Dir : name -> (rel,dir) item
-| Link : name * ('absrel,'kind) path -> ('absrel,'kind) item
-| Dot : (rel,dir) item
-| Dotdot : (rel,dir) item
+type (_,_) impl =
+  | R  : (rel,rel) impl
+  | R' : (rel,abs) impl
+  | A  : (abs,abs) impl
 
-and ('absrel,'kind) path =
-| Item : ('absrel,'kind) item -> ('absrel,'kind) path
-| Cons : ('a,'b,'c) cons * ('a,dir) item * ('b,'kind) path -> ('c,'kind) path
+type ('kind,'res_kind,'obj) item =
+| Root : (abs,abs,dir) item
+| File : name -> (rel,rel,file) item
+| Dir : name -> (rel,rel,dir) item
+| Link : name * (_,'res_kind,'obj) path -> (rel,'res_kind,'obj) item
+| Dot : (rel,rel,dir) item
+| Dotdot : (rel,rel,dir) item
 
-type file_path = (abs,file) path
-type dir_path = (abs,dir) path
+and ('kind,'res_kind,'obj) path =
+| Item : ('kind,'res_kind,'obj) item * ('kind,'res_kind) impl -> ('kind,'res_kind,'obj) path
+| Cons :
+    ('k1,'k2,'k) cons *
+    ('res_k1,'res_k2,'res_k) cons *
+    ('k, 'res_k) impl *
+    ('k1,'res_k1,dir) item * ('k2,'res_k2,'o) path -> ('k,'res_k,'o) path
+
+type file_path = (abs,abs,file) path
+type dir_path = (abs,abs,dir) path
 
 
 (******************************************************************************)
@@ -55,56 +64,52 @@ let name s =
 (* Operators                                                                  *)
 (******************************************************************************)
 
-(* let rec concat : type a b c kind . *)
-(*   (a,b,c) cons -> (a,dir) path -> (b,kind) path -> (c,kind) path *)
-(*   = fun cons x y -> *)
-(*     match cons, x with *)
-(*     | _, Item x -> Cons (cons,x,y) *)
-(*     | RR, Cons(RR,x1,x2) -> Cons (RR, x1, concat RR x2 y) *)
-(*     | AR, Cons(AR,x1,x2) -> Cons (AR, x1, concat RR x2 y) *)
-(*     | AR, Cons(RA,x1,x2) -> concat AR x2 y *)
-(*     | AR, Cons(AA,x1,x2) -> concat AR x2 y *)
-(*     | RA, _ -> y *)
-(*     | AA, _ -> y *)
+let rec concat : type a b c a' b' c' obj .
+  (a,b,c) cons -> (a',b',c') cons -> (c,c') impl -> (a,a',dir) path -> (b,b',obj) path -> (c,c',obj) path
+  = fun cons cons' impl x y ->
+    match cons, cons', impl, x with
+    | RR, RR, R, Item (i,R) -> Cons (cons,cons',R,i,y)
+    | RR, RR, R, Cons (RR,RR,R,x1,x2) -> Cons (RR,RR,R,x1,concat RR RR R x y)
+    | RR, RA, R', Cons (RR,RR,R,x1,x2) -> Cons (RR,RA,R',x1,concat RR RA R' x y)
+    | RR, RA, R', Item (i,R) -> Cons (RR,RA,R',i,y)
+    | RR, AR, R',  Item (i,R') -> Cons (RR,AR,R',i,y)
+    | RR, AR, R', Cons (RR,AR,R',x1,x2) -> Cons (RR,AR,R',x1,concat RR RR R x2 y)
+    | RR, AR, R', Cons (RR,RA,R',x1,x2) -> Cons (RR,RA,R',x1,concat RR AR R' x2 y)
+    | RR, AR, R', Cons (RR,AA,R',x1,x2) -> Cons (RR,AA,R',x1,concat RR AR R' x2 y)
+    | RR, AA, R', Item (i,R') -> Cons (RR, AA,R', i, y)
+    | RR, AA, R', Cons (RR,AR,R',x1,x2) -> Cons (RR, AA,R',x1,concat RR RA R' x2 y)
+    | RR, AA, R', Cons (RR,RA,R',x1,x2) -> Cons (RR, RA,R',x1,concat RR AA R' x2 y)
+    | RR, AA, R', Cons (RR,AA,R',x1,x2) -> Cons (RR, AA,R',x1,concat RR AA R' x2 y)
 
-let rec concat : type a b c kind .
-  (a,b,c) cons -> (a,dir) path -> (b,kind) path -> (c,kind) path
-  = fun cons x y ->
-    match cons, x with
-    | _, Item x -> Cons (cons,x,y)
-    | RR, Cons (RR,x1,x2) -> Cons (RR, x1, concat RR x2 y)
-    | AR, Cons (AR,x1,x2) -> Cons (AR, x1, concat RR x2 y)
-    | AR, Cons (RA,x1,x2) -> Cons (RA, x1, concat AR x2 y)
-    | AR, Cons (AA,x1,x2) -> Cons (AA, x1, concat AR x2 y)
-    | RA, Cons (RR,x1,x2) -> Cons (RA, x1, concat RA x2 y)
-    | AA, Cons (AA,x1,x2) -> Cons (AA, x1, concat AA x2 y)
-    | AA, Cons (AR,x1,x2) -> Cons (AA, x1, concat RA x2 y)
-    | AA, Cons (RA,x1,x2) -> Cons (RA, x1, concat AA x2 y)
+let impl_of_cons : type b1 b2 b. (b1,b2,b) cons -> (b,b) impl = function
+  | RR -> R
+  | RA -> A
+  | AR -> A
+  | AA -> A
 
-let rec resolve_links : type a b . (a,b) path -> (a,b) path =
-  let resolve_item_links : type a b . (a,b) item -> (a,b) path = fun x ->
-    match x with
-    | Root -> Item x
-    | File _ -> Item x
-    | Dir _ -> Item x
-    | Link (_, target) -> resolve_links target
-    | Dot -> Item x
-    | Dotdot -> Item x
+let rec resolve : type a b c. (a,b,c) path -> (b,b,c) path =
+  let resolve_item : type a b c. (a,b,c) item -> (b,b,c) path = function
+    | Root -> Item (Root,A)
+    | File _ as i -> Item (i,R)
+    | Dir _ as i -> Item (i,R)
+    | Link (_, target) -> resolve target
+    | Dot -> Item (Dot, R)
+    | Dotdot -> Item (Dotdot, R)
   in
   function
-  | Item x -> resolve_item_links x
-  | Cons (cons, item, path) ->
-    concat cons (resolve_item_links item) (resolve_links path)
+  | Item (x,_) -> resolve_item x
+  | Cons (cons, cons', impl, item, path) ->
+    concat cons' cons' (impl_of_cons cons') (resolve_item item) (resolve path)
 
-let rec parent : type a b . (a,b) path -> (a,dir) path =
-  fun path -> match path with
-  | Item Root -> path
-  | Item (File _) -> Item Dot
-  | Item (Dir _) -> Item Dot
-  | Item (Link (_,path)) -> parent path (* Are we so sure? Why not [Item Dot]? *)
-  | Item Dot -> Item Dotdot
-  | Item Dotdot -> Cons (RR, Dotdot, path)
-  | Cons (cons, item, path) -> Cons(cons, item, parent path)
+let rec parent : type a b obj. (a,b,obj) path -> (a,b,dir) path =
+  function
+  | Item (Root,_) as p -> p
+  | Item (File _, _) -> Item (Dot, R)
+  | Item (Dir _, _) -> Item (Dot, R)
+  | Item (Link _,_) -> Item (Dot, R)
+  | Item (Dot,_) -> Item (Dotdot, R)
+  | Item (Dotdot,_) as p -> Cons (RR, RR, R, Dotdot, p)
+  (* | Cons (cons, item, path) -> Cons(cons, item, parent path) *)
 
 let rec normalize : type a b . (a,b) path -> (a,b) path =
   fun path -> match path with
