@@ -60,15 +60,24 @@ let rec concat
     | Item x -> Cons (x,y)
     | Cons (x1, x2) -> Cons (x1, concat x2 y)
 
+let is_absolute
+  : type a k. (a,k) path -> bool
+  = function
+    | Item Root -> true
+    | Cons (Root, _) -> true
+    | _ -> false
+
 let rec resolve : type k o. (k,o) path -> o some_kind_of_path =
   function
   | Item x -> resolve_item x
   | Cons (item, path) ->
-    match resolve_item item, resolve path with
-    | Rel_path x, Rel_path y -> Rel_path (concat x y)
-    | Rel_path x, Abs_path y -> Rel_path (concat x y)
-    | Abs_path x, Rel_path y -> Abs_path (concat x y)
-    | Abs_path x, Abs_path y -> Abs_path (concat x y)
+    match resolve_item item, resolve path, is_absolute path with
+    | Rel_path x, Rel_path y, _ -> Rel_path (concat x y)
+    | Rel_path x, Abs_path y, true -> Rel_path (concat x y)
+    | Rel_path x, Abs_path y, false -> Abs_path y
+    | Abs_path x, Rel_path y, _ -> Abs_path (concat x y)
+    | Abs_path x, Abs_path y, true -> Abs_path (concat x y)
+    | Abs_path x, Abs_path y, false -> Abs_path y
 
 and resolve_item : type k o . (k,o) item -> o some_kind_of_path = fun x ->
   match x with
