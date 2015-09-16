@@ -17,27 +17,21 @@ type rel
 type dir
 type file
 
-type (_,_,_) cons =
-  | RR : (rel,rel,rel) cons
-  | RA : (rel,abs,abs) cons
-  | AR : (abs,rel,abs) cons
-  | AA : (abs,abs,abs) cons
-
 type ('kind,'obj) item =
-| Root : (abs,dir) item
-| File : name -> (rel,file) item
-| Dir : name -> (rel,dir) item
-| Link : name * (_,'obj) path -> (rel,'obj) item
-| Dot : (rel,dir) item
-| Dotdot : (rel,dir) item
+  | Root : (abs,dir) item
+  | File : name -> (rel,file) item
+  | Dir : name -> (rel,dir) item
+  | Link : name * (_,'obj) path -> (rel,'obj) item
+  | Dot : (rel,dir) item
+  | Dotdot : (rel,dir) item
 
 and ('kind,'obj) path =
-| Item : ('kind,'obj) item -> ('kind,'obj) path
-| Cons : ('a,'b,'c) cons * ('a,dir) item * ('b,'obj) path -> ('c,'obj) path
+  | Item : ('kind,'obj) item -> ('kind,'obj) path
+  | Cons : ('a,dir) item * (_,'obj) path -> ('a,'obj) path
 
-type _ some_kind_of_path =
-  | Abs_path : (abs,'a) path -> 'a some_kind_of_path
-  | Rel_path : (rel,'a) path -> 'a some_kind_of_path
+type 'a some_kind_of_path =
+  | Abs_path of (abs,'a) path
+  | Rel_path of (rel,'a) path
 
 type file_path = (abs,file) path
 type dir_path = (abs,dir) path
@@ -59,41 +53,22 @@ let name s =
 (* Operators                                                                  *)
 (******************************************************************************)
 
-(* let rec concat : type a b c kind . *)
-(*   (a,b,c) cons -> (a,dir) path -> (b,kind) path -> (c,kind) path *)
-(*   = fun cons x y -> *)
-(*     match cons, x with *)
-(*     | _, Item x -> Cons (cons,x,y) *)
-(*     | RR, Cons(RR,x1,x2) -> Cons (RR, x1, concat RR x2 y) *)
-(*     | AR, Cons(AR,x1,x2) -> Cons (AR, x1, concat RR x2 y) *)
-(*     | AR, Cons(RA,x1,x2) -> concat AR x2 y *)
-(*     | AR, Cons(AA,x1,x2) -> concat AR x2 y *)
-(*     | RA, _ -> y *)
-(*     | AA, _ -> y *)
-
-let rec concat : type a b c kind .
-  (a,b,c) cons -> (a,dir) path -> (b,kind) path -> (c,kind) path
-  = fun cons x y ->
-    match cons, x with
-    | _, Item x -> Cons (cons,x,y)
-    | RR, Cons (RR,x1,x2) -> Cons (RR, x1, concat RR x2 y)
-    | AR, Cons (AR,x1,x2) -> Cons (AR, x1, concat RR x2 y)
-    | AR, Cons (RA,x1,x2) -> Cons (RA, x1, concat AR x2 y)
-    | AR, Cons (AA,x1,x2) -> Cons (AA, x1, concat AR x2 y)
-    | RA, Cons (RR,x1,x2) -> Cons (RA, x1, concat RA x2 y)
-    | AA, Cons (AA,x1,x2) -> Cons (AA, x1, concat AA x2 y)
-    | AA, Cons (AR,x1,x2) -> Cons (AA, x1, concat RA x2 y)
-    | AA, Cons (RA,x1,x2) -> Cons (RA, x1, concat AA x2 y)
+let rec concat
+  : type a b kind . (a,dir) path -> (b,kind) path -> (a,kind) path
+  = fun x y ->
+    match x with
+    | Item x -> Cons (x,y)
+    | Cons (x1, x2) -> Cons (x1, concat x2 y)
 
 let rec resolve : type k o. (k,o) path -> o some_kind_of_path =
   function
   | Item x -> resolve_item x
-  | Cons (_, item, path) ->
+  | Cons (item, path) ->
     match resolve_item item, resolve path with
-    | Rel_path x, Rel_path y -> Rel_path (concat RR x y)
-    | Rel_path x, Abs_path y -> Abs_path (concat RA x y)
-    | Abs_path x, Rel_path y -> Abs_path (concat AR x y)
-    | Abs_path x, Abs_path y -> Abs_path (concat AA x y)
+    | Rel_path x, Rel_path y -> Rel_path (concat x y)
+    | Rel_path x, Abs_path y -> Rel_path (concat x y)
+    | Abs_path x, Rel_path y -> Abs_path (concat x y)
+    | Abs_path x, Abs_path y -> Abs_path (concat x y)
 
 and resolve_item : type k o . (k,o) item -> o some_kind_of_path = fun x ->
   match x with
@@ -111,50 +86,56 @@ let rec parent : type a b . (a,b) path -> (a,dir) path =
   | Item (Dir _) -> Item Dot
   | Item (Link _) -> Item Dot
   | Item Dot -> Item Dotdot
-  | Item Dotdot -> Cons (RR, Dotdot, path)
-  | Cons (cons, item, path) -> Cons(cons, item, parent path)
+  | Item Dotdot -> Cons (Dotdot, path)
+  | Cons (item, path) -> Cons (item, parent path)
 
 let rec normalize : type a b . (a,b) path -> (a,b) path =
   fun path -> match path with
     | Item _ -> path
-    | Cons (cons, dir, path) ->
+    | Cons (dir, path) ->
       let path = normalize path in
-      match cons, dir, path with
-      | RA, _, (Item Root as p) -> p
-      | AA, _, (Item Root as p) -> p
-      | _, Root, Item (File _) -> Cons (cons, dir, path)
-      | _, Root, Item (Link _) -> Cons (cons, dir, path)
-      | _, Root, Item (Dir _)  -> Cons (cons, dir, path)
-      | _, Dir _, Item (File _) -> Cons(cons, dir, path)
-      | _, Dir _, Item (Link _) -> Cons(cons, dir, path)
-      | _, Dir _, Item (Dir _) -> Cons (cons, dir, path)
-      | RR, Dir _, Item Dot -> Item dir
-      | RR, Dir _, Item Dotdot -> Item Dot
-      | _,  Dir _, Cons(_, Dir _, _) -> Cons (cons, dir, path)
-      | _,  Dir _, Cons (_, Link _, _) -> Cons (cons, dir, path)
-      | RA, Dir _, Cons(_, Root, _) -> path
-      | _, _, Cons (_, Dot, _) -> assert false
-      | RR, Dir _, Cons (RR, Dotdot, path) -> path
-      | RA, Dir _, Cons (RA, Dotdot, path) -> path
-      | _, Link(name,p), _ -> Cons (cons, Link (name, normalize p), path)
-      | RR, Dot, _ -> path
-      | RA, Dot, _ -> path
-      | _, Dotdot, Cons _ -> Cons (cons, dir, path)
-      | _, Dotdot, Item (File _) -> Cons (cons, dir, path)
-      | _, Dotdot, Item (Link _) -> Cons (cons, dir, path)
-      | _, Dotdot, Item (Dir _) -> Cons (cons, dir, path)
-      | RR, Dotdot, Item Dot -> Item Dotdot
-      | _, Dotdot, Item Dotdot -> Cons (cons, dir, path)
-      | AA, Root, Cons (_, Root, _) -> path
-      | _, Root, Cons (_, Dir _, _) -> Cons (cons, dir, path)
-      | _, Root, Cons (_, Link _, _) -> Cons (cons, dir, path)
-      | AA, Root, Cons (RA, Dotdot, path) -> normalize (Cons (cons, Root, path))
-      | AR, Root, Cons (RR, Dotdot, path) -> normalize (Cons (cons, Root, path))
-      | AR, Root, Item Dot -> Item Root
-      | AR, Root, Item Dotdot -> Item Root
+      match dir, path with
+      | _, Item Dot -> Item dir
+      | _, Item Root -> Item dir
+      | Dot, Item (File _) -> path
+      | Dot, Item (Dir _) -> path
+      | Dot, Item (Link _) -> path
+      | Dot, Item Dotdot -> path
+      | Dot, Cons (Root, path') -> normalize (Cons (Dot, path'))
+      | Dot, Cons (Dir _, _) -> path
+      | Dot, Cons (Link _, _) -> path
+      | Dot, Cons (Dotdot, _) -> path
+      | _, Cons (Dot, _) -> assert false
+      | Root, Cons (Dotdot, path') -> normalize (Cons (Root, path'))
+      | _, _ -> Cons (dir, path)
 
-let equal p q =
-  let equal_item : type a b . (a,b) item -> (a,b) item -> bool =
+let rec equal
+  : type a b c d . (a,b) path -> (c,d) path -> bool
+  = fun p q -> equal_normalized (normalize p) (normalize q)
+
+and equal_normalized : type a b c d . (a,b) path -> (c,d) path -> bool =
+  fun p q -> match p, q with
+    | Item p, Item q -> equal_item p q
+    | Cons(p_dir, p_path), Cons(q_dir, q_path) ->
+      (equal_item p_dir q_dir) &&
+      (
+        match p_path, q_path with
+        | Item Root, Item Root -> equal_normalized p_path q_path
+        | Item Dot, Item Dot -> equal_normalized p_path q_path
+        | Item Dotdot, Item Dotdot -> equal_normalized p_path q_path
+        | Item (File _), Item (File _) -> equal_normalized p_path q_path
+        | Item (Dir _), Item (Dir _) -> equal_normalized p_path q_path
+        | Item (Link _), Item (Link _) -> equal_normalized p_path q_path
+        | Cons (Root, _), Cons (Root, _) -> equal_normalized p_path q_path
+        | Cons (Dot, _), Cons (Dot, _)  -> equal_normalized p_path q_path
+        | Cons (Dotdot, _), Cons (Dotdot, _)  -> equal_normalized p_path q_path
+        | Cons (Dir _, _), Cons (Dir _, _) -> equal_normalized p_path q_path
+        | Cons (Link _, _), Cons (Link _, _) -> equal_normalized p_path q_path
+        | _, _ -> false
+      )
+    | _, _ -> false
+
+and equal_item : type a b c d. (a,b) item -> (c,d) item -> bool =
     fun p q -> match p,q with
       | Root, Root -> true
       | Root, _ -> false
@@ -165,28 +146,14 @@ let equal p q =
       | Dir p, Dir q -> String.equal p q
       | Dir _, _ -> false
       | _, Dir _ -> false
-      | Link _, _ -> assert false
-      | _, Link _ -> assert false
+      | Link (np, p'), Link (nq, q') ->
+        (String.equal np nq) && (equal p' q')
+      | Link _, _ -> false
+      | _, Link _ -> false
       | Dot, Dot -> true
       | Dot, _ -> false
       | _, Dot -> false
       | Dotdot, Dotdot -> true
-  in
-  let rec equal_normalized : type a b . (a,b) path -> (a,b) path -> bool =
-    fun p q -> match p,q with
-    | Item p, Item q -> equal_item p q
-    | Cons(RR, p_dir,p_path), Cons(RR, q_dir,q_path) ->
-      (equal_item p_dir q_dir) && (equal_normalized p_path q_path)
-    | Cons(AR, p_dir,p_path), Cons(AR, q_dir,q_path) ->
-      (equal_item p_dir q_dir) && (equal_normalized p_path q_path)
-    | Cons(RA, p_dir,p_path), Cons(RA, q_dir,q_path) ->
-      (equal_item p_dir q_dir) && (equal_normalized p_path q_path)
-    | Cons(AA, p_dir,p_path), Cons(AA, q_dir,q_path) ->
-      (equal_item p_dir q_dir) && (equal_normalized p_path q_path)
-    | _, _ -> false
-  in
-  equal_normalized (normalize p) (normalize q)
-
 
 (******************************************************************************)
 (* Elems - internal use only                                             *)
@@ -259,7 +226,7 @@ end = struct
         let rec loop = function
           | [] -> assert false
           | x::[] -> Item (item x)
-          | x::elems -> Cons (RR, item x, loop elems)
+          | x::elems -> Cons (item x, loop elems)
         in
         Ok (loop elems)
 
@@ -273,7 +240,7 @@ end = struct
           elems sexp_of_elems
       else (
         rel_dir_of_elems tl >>| fun reldir ->
-        Cons (AR, Root, reldir)
+        Cons (Root, reldir)
       )
     )
     | _ ->
@@ -298,7 +265,7 @@ end = struct
         | [] -> Ok (Item (File last))
         | _ ->
           rel_dir_of_elems elems >>| fun dir ->
-          concat RR dir (Item (File last))
+          concat dir (Item (File last))
     )
 
   let file_of_elems elems : (abs,file) path Or_error.t =
@@ -316,7 +283,7 @@ end = struct
         error "path cannot be treated as file" elems sexp_of_elems
       | _ ->
         dir_of_elems ("/"::rest) >>| fun dir ->
-        concat AR dir (Item (File last))
+        concat dir (Item (File last))
     )
     | _ ->
       error "absolute path must begin with root directory"
@@ -341,7 +308,7 @@ let file_path s = elems s >>= file_of_elems
 (******************************************************************************)
 let rec to_elem_list : type a b . (a,b) path -> elem list = function
   | Item x -> [item_to_elem x]
-  | Cons (_, item, path) -> (item_to_elem item) :: (to_elem_list path)
+  | Cons (item, path) -> (item_to_elem item) :: (to_elem_list path)
 
 let to_list path = (to_elem_list path :> string list)
 

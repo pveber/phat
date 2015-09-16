@@ -59,12 +59,6 @@ type rel (** relative path, phantom type *)
 type file (** regular file, phantom type *)
 type dir (** directory, phantom type *)
 
-type (_,_,_) cons =
-  | RR : (rel,rel,rel) cons
-  | RA : (rel,abs,abs) cons
-  | AR : (abs,rel,abs) cons
-  | AA : (abs,abs,abs) cons
-
 type ('kind,'obj) item =
   | Root : (abs,dir) item
   | File : name -> (rel,file) item
@@ -75,11 +69,11 @@ type ('kind,'obj) item =
 
 and ('kind,'obj) path =
   | Item : ('kind,'obj) item -> ('kind,'obj) path
-  | Cons : ('a,'b,'c) cons * ('a,dir) item * ('b,'obj) path -> ('c,'obj) path
+  | Cons : ('a,dir) item * ('b,'obj) path -> ('c,'obj) path
 
-type _ some_kind_of_path =
-  | Abs_path : (abs,'a) path -> 'a some_kind_of_path
-  | Rel_path : (rel,'a) path -> 'a some_kind_of_path
+type 'a some_kind_of_path =
+  | Abs_path of (abs,'a) path
+  | Rel_path of (rel,'a) path
 
 type file_path = (abs,file) path
 type dir_path = (abs,dir) path
@@ -118,11 +112,7 @@ val to_string : (_,_) path -> string
 
 val normalize : ('absrel,'kind) path -> ('absrel,'kind) path
 
-val concat :
-  ('a, 'b, 'c) cons ->
-  ('a, dir) path ->
-  ('b, 'kind) path ->
-  ('c, 'kind) path
+val concat : ('a, dir) path -> (_, 'kind) path -> ('a, 'kind) path
 
 (** Follow all links. Returned value guaranteed not to contain any
     instance of [Link]. *)
